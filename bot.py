@@ -110,7 +110,18 @@ def run_webhook():
     async def health(_):
         return web.Response(text="OK")
 
+    diag_lock = asyncio.Lock()
+
+    async def diag(_):
+        import diag as d
+
+        if diag_lock.locked():
+            return web.Response(text="busy")
+        async with diag_lock:
+            return web.Response(text=await asyncio.to_thread(d.run))
+
     app = web.Application()
+    app.router.add_get("/diag", diag)
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
     SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET).register(app, path=WEBHOOK_PATH)
