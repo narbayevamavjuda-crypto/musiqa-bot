@@ -123,11 +123,15 @@ async def join_request(req: ChatJoinRequest):
 
 
 # ---------------- qidiruv va yuklash ----------------
+def audio_caption(username: str) -> str:
+    return f"@{username} Eng sara musiqalar shu yerda.\nQidiring, toping, tinglang va MP3 yuklab oling."
+
+
 async def deliver(message: Message, bot: Bot, key: str, url: str):
     me = await bot.me()
     cached = await db.get_cached(key)
     if cached:
-        await message.answer_audio(cached, caption=f"🤖 @{me.username}")
+        await message.answer_audio(cached, caption=audio_caption(me.username))
         return
 
     if key in _in_progress:
@@ -148,7 +152,7 @@ async def deliver(message: Message, bot: Bot, key: str, url: str):
             title=info["title"][:64],
             performer=info["performer"][:64],
             duration=info["duration"],
-            caption=f"🤖 @{me.username}",
+            caption=audio_caption(me.username),
         )
         await db.set_cached(key, sent.audio.file_id)
         await status.delete()
