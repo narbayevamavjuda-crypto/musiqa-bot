@@ -10,7 +10,8 @@ from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefaul
 
 import db
 import middlewares
-from config import ADMINS, BASE_URL, BOT_TOKEN, PORT, WEBHOOK_PATH, WEBHOOK_SECRET
+import music
+from config import ADMINS, BASE_URL, BOT_TOKEN, COOKIES_FILE, PORT, WEBHOOK_PATH, WEBHOOK_SECRET
 from handlers import admin, user
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -69,12 +70,24 @@ async def on_startup():
     await db.init()
     middlewares.banned_users.update(await db.banned_ids())
 
+    # YouTube cookies: avval bazadan, bo'lmasa Render "Secret Files" dagi cookies.txt dan
+    cookies = await db.get_setting("yt_cookies")
+    if not cookies and COOKIES_FILE:
+        with open(COOKIES_FILE, encoding="utf-8", errors="ignore") as f:
+            cookies = f.read()
+    music.set_cookies(cookies)
+    log.info("YouTube cookies: %s", "bor" if cookies else "yo'q")
+
     try:
         await bot.set_my_commands(USER_COMMANDS, scope=BotCommandScopeDefault())
-        await bot.set_my_short_description("🎵 Qo'shiq nomini yozing — MP3 qilib yuboraman!")
+        await bot.set_my_short_description("🎶 Qo'shiq nomi, matni yoki videosini yuboring — musiqani topib beraman!")
         await bot.set_my_description(
-            "🎵 Musiqa topuvchi bot.\n\nQo'shiq yoki ijrochi nomini yozing — bot topib, audio qilib yuboradi.\n\n"
-            "Foydalanish shartlari: /terms\nMaxfiylik siyosati: /privacy"
+            "🎶 MusiqaTop — eng sara musiqalar shu yerda!\n\n"
+            "🔎 Qo'shiq nomi yoki ijrochini yozing\n"
+            "🎤 Qo'shiqdan bir qator matn yozing\n"
+            "🎬 Instagram/TikTok video yoki ovozli xabar yuboring\n"
+            "— bot musiqani topib, sifatli audio qilib yuboradi.\n\n"
+            "Shartlar: /terms · Maxfiylik: /privacy"
         )
     except Exception as e:  # noqa: BLE001
         log.warning("Bot ma'lumotlarini o'rnatib bo'lmadi: %s", e)
@@ -110,18 +123,7 @@ def run_webhook():
     async def health(_):
         return web.Response(text="OK")
 
-    diag_lock = asyncio.Lock()
-
-    async def diag(_):
-        import diag as d
-
-        if diag_lock.locked():
-            return web.Response(text="busy")
-        async with diag_lock:
-            return web.Response(text=await asyncio.to_thread(d.run))
-
     app = web.Application()
-    app.router.add_get("/diag", diag)
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
     SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET).register(app, path=WEBHOOK_PATH)

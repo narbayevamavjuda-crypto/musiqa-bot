@@ -3,6 +3,7 @@ import csv
 import html
 import io
 import logging
+import os
 import time
 
 from aiogram import Bot, F, Router
@@ -23,6 +24,7 @@ from aiogram.types import (
 )
 
 import db
+import music
 from config import ADMINS
 from middlewares import banned_users, reset_sub_cache
 
@@ -37,6 +39,7 @@ BTN_CHANNELS = "📋 Kanallar"
 BTN_ADD_CH = "➕ Kanal qo'shish"
 BTN_BAN = "🚫 Ban / Unban"
 BTN_EXPORT = "📥 Foydalanuvchilar (CSV)"
+BTN_COOKIES = "🍪 YouTube cookies"
 BTN_EXIT = "🚪 Paneldan chiqish"
 BTN_CANCEL = "❌ Bekor qilish"
 
@@ -45,6 +48,7 @@ admin_kb = ReplyKeyboardMarkup(
         [KeyboardButton(text=BTN_STATS), KeyboardButton(text=BTN_ADS)],
         [KeyboardButton(text=BTN_CHANNELS), KeyboardButton(text=BTN_ADD_CH)],
         [KeyboardButton(text=BTN_BAN), KeyboardButton(text=BTN_EXPORT)],
+        [KeyboardButton(text=BTN_COOKIES)],
         [KeyboardButton(text=BTN_EXIT)],
     ],
     resize_keyboard=True,
@@ -59,6 +63,7 @@ class AdminState(StatesGroup):
     ad_confirm = State()
     channel = State()
     ban = State()
+    cookies = State()
 
 
 @router.message(Command("admin"))
@@ -417,3 +422,84 @@ async def ban_cmd(message: Message, command: CommandObject):
         await message.answer(f"Foydalanish: <code>/{command.command} 123456</code>")
         return
     await _set_ban(message, int(command.args.strip()), command.command == "ban")
+
+
+# =====================================================================
+#                 YOUTUBE COOKIES va TEKSHIRUV
+# =====================================================================
+@router.message(F.text == BTN_COOKIES)
+async def cookies_start(message: Message, state: FSMContext):
+    status = "✅ o'rnatilgan" if music.has_cookies() else "❌ o'rnatilmagan"
+    await state.set_state(AdminState.cookies)
+    await message.answer(
+        f"🍪 <b>YouTube cookies</b> — hozir: {status}\n\n"
+        "YouTube serverdan yuklashni bloklaydi. Cookies bilan bu cheklov olib tashlanadi.\n\n"
+        "<b>Qanday olinadi:</b>\n"
+        "1. Kompyuterda Chrome'ga <b>Get cookies.txt LOCALLY</b> kengaytmasini o'rnating.\n"
+        "2. <b>Inkognito</b> oynada youtube.com ga <b>ikkinchi (keraksiz)</b> Google akkaunt bilan kiring.\n"
+        "3. Kengaytma orqali <b>Export</b> → <code>cookies.txt</code> faylini yuklab oling.\n"
+        "4. Inkognito oynani yoping (YouTube'dan chiqmang!).\n"
+        "5. Shu faylni bu yerga <b>fayl qilib</b> yuboring.\n\n"
+        "O'chirish uchun: <code>/cookies_off</code>",
+        reply_markup=cancel_kb,
+    )
+
+
+@router.message(AdminState.cookies, F.document)
+async def cookies_got(message: Message, state: FSMContext, bot: Bot):
+    if message.document.file_size > 1024 * 1024:
+        await message.answer("❗️ Fayl juda katta. cookies.txt odatda 50 KB dan kichik bo'ladi.")
+        return
+    buf = io.BytesIO()
+    await bot.download(message.document, destination=buf)
+    text = buf.getvalue().decode("utf-8", errors="ignore")
+    if ".youtube.com" not in text:
+        await message.answer("❗️ Bu faylda YouTube cookies topilmadi. youtube.com sahifasida eksport qiling.")
+        return
+    await db.set_setting("yt_cookies", text)
+    music.set_cookies(text)
+    await state.clear()
+    try:
+        await message.delete()  # maxfiy fayl chatda qolmasin
+    except TelegramBadRequest:
+        pass
+    await message.answer("✅ Cookies saqlandi. Tekshirish: /diag", reply_markup=admin_kb)
+
+
+@router.message(Command("cookies_off"))
+async def cookies_off(message: Message, state: FSMContext):
+    await state.clear()
+    await db.set_setting("yt_cookies", None)
+    music.set_cookies(None)
+    await message.answer("🗑 Cookies o'chirildi.", reply_markup=admin_kb)
+
+
+@router.message(Command("diag"))
+async def diag(message: Message):
+    status = await message.answer("🩺 Tekshirilmoqda (30–60 soniya)...")
+    lines = [f"🍪 Cookies: {'✅' if music.has_cookies() else '❌'}"]
+
+    async def check(name, coro):
+        t = time.monotonic()
+        try:
+            res = await coro
+            lines.append(f"✅ {name} ({time.monotonic() - t:.0f}s): {html.escape(str(res))[:80]}")
+        except Exception as e:  # noqa: BLE001
+            lines.append(f"❌ {name}: {html.escape(str(e))[:120]}")
+
+    items = []
+
+    async def do_search():
+        items.extend(await music.search("Shahzoda Ayt", limit=5))
+        return f"{len(items)} ta natija"
+
+    async def do_download():
+        if not items:
+            raise RuntimeError("qidiruv natijasi yo'q")
+        info = await music.download(items[0])
+        os.remove(info["path"])
+        return f"{info['source']}: {info['artist']} - {info['title']}"
+
+    await check("Qidiruv", do_search())
+    await check("Yuklash", do_download())
+    await status.edit_text("🩺 <b>Tekshiruv natijasi</b>\n\n" + "\n".join(lines))

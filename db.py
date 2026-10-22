@@ -20,6 +20,7 @@ PG_SCHEMA = [
     "CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, file_id TEXT)",
     """CREATE TABLE IF NOT EXISTS join_requests (
         chat_id BIGINT, user_id BIGINT, PRIMARY KEY (chat_id, user_id))""",
+    "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)",
 ]
 LITE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS channels (
 CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, file_id TEXT);
 CREATE TABLE IF NOT EXISTS join_requests (
     chat_id INTEGER, user_id INTEGER, PRIMARY KEY (chat_id, user_id));
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 """
 
 
@@ -206,4 +208,19 @@ async def set_cached(key: str, file_id: str):
     await _exec(
         "INSERT INTO cache (key, file_id) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET file_id = excluded.file_id",
         key, file_id,
+    )
+
+
+# ---------------- sozlamalar (YouTube cookies va h.k.) ----------------
+async def get_setting(key: str) -> str | None:
+    return await _val("SELECT value FROM settings WHERE key = ?", key)
+
+
+async def set_setting(key: str, value: str | None):
+    if value is None:
+        await _exec("DELETE FROM settings WHERE key = ?", key)
+        return
+    await _exec(
+        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        key, value,
     )
