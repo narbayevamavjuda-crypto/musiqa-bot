@@ -14,4 +14,4 @@ COPY . .
 
 ENV PYTHONUNBUFFERED=1
 # Har ishga tushganda yt-dlp yangilanadi (YouTube tez-tez o'zgaradi)
-CMD ["sh", "-c", "pip install -q --no-cache-dir -U 'yt-dlp[default]' ; python bot.py"]
+CMD ["sh", "-c", "pip install -q --no-cache-dir -U 'yt-dlp[default,curl-cffi]' ; python bot.py"]
