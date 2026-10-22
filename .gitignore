@@ -1,0 +1,7 @@
+.venv/
+.env
+*.db
+downloads/
+__pycache__/
+cookies.txt
+github_uchun/
