@@ -1,10 +1,14 @@
 """Vaqtinchalik: serverda qaysi manba ishlashini tekshirish (/diag)."""
 import asyncio
-import os
+import json
 import tempfile
 import time
+import urllib.request
 
 import yt_dlp
+
+VID = "IMdfvJ6Q2Cg"
+UA = {"User-Agent": "Mozilla/5.0"}
 
 
 def _try(name, fn):
@@ -12,64 +16,50 @@ def _try(name, fn):
     try:
         return f"OK   {name} ({time.time() - t:.1f}s): {fn()}"
     except Exception as e:  # noqa: BLE001
-        return f"FAIL {name} ({time.time() - t:.1f}s): {str(e).replace(chr(10), ' ')[:200]}"
+        return f"FAIL {name} ({time.time() - t:.1f}s): {str(e).replace(chr(10), ' ')[:150]}"
 
 
-def _sc_many():
-    out = []
-    with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True}) as y:
-        r = y.extract_info("scsearch10:Shahzoda Ayt", download=False)
-    for e in r["entries"]:
-        try:
-            with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True, "format": "bestaudio/best"}) as y:
-                i = y.extract_info(e["url"], download=False)
-            out.append(f"ok:{i.get('format_id')}:{i.get('duration')}")
-        except Exception as ex:  # noqa: BLE001
-            out.append("drm" if "DRM" in str(ex) else "err")
-    return " ".join(out)
+def _get(url, n=None):
+    with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=20) as r:
+        return r.read(n) if n else r.read()
 
 
-def _sc_file():
-    d = tempfile.mkdtemp()
-    with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True}) as y:
-        r = y.extract_info("scsearch10:Konsta", download=False)
-    for e in r["entries"]:
-        try:
-            with yt_dlp.YoutubeDL({"quiet": True, "format": "bestaudio/best", "outtmpl": f"{d}/%(id)s.%(ext)s"}) as y:
-                i = y.extract_info(e["url"], download=True)
-            p = i["requested_downloads"][0]["filepath"]
-            return p
-        except Exception:  # noqa: BLE001
-            continue
-    raise RuntimeError("hech biri yuklanmadi")
+def _invidious(host):
+    d = json.loads(_get(f"https://{host}/api/v1/videos/{VID}?local=true"))
+    fmts = [f for f in d.get("adaptiveFormats", []) if f.get("type", "").startswith("audio")]
+    url = fmts[-1]["url"]
+    if url.startswith("/"):
+        url = f"https://{host}{url}"
+    return f"{len(fmts)} audio, yuklandi {len(_get(url, 200000))} bayt"
 
 
-def _video(url):
-    with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True}) as y:
-        i = y.extract_info(url, download=False)
-    return f"{i.get('title', '')[:50]} {i.get('duration')}s"
+def _piped(host):
+    d = json.loads(_get(f"https://{host}/streams/{VID}"))
+    s = d["audioStreams"]
+    return f"{len(s)} audio, yuklandi {len(_get(s[0]['url'], 200000))} bayt"
 
 
-def _shazam(path):
+def _shazam():
     from shazamio import Shazam
+
+    d = tempfile.mkdtemp()
+    with yt_dlp.YoutubeDL({"quiet": True, "format": "bestaudio/best", "outtmpl": f"{d}/a.%(ext)s"}) as y:
+        i = y.extract_info("https://www.tiktok.com/@scout2015/video/6718335390845095173", download=True)
+    path = i["requested_downloads"][0]["filepath"]
 
     async def go():
         r = await Shazam().recognize(path)
         t = r.get("track") or {}
-        return f"{t.get('subtitle')} - {t.get('title')}"
+        return f"{t.get('subtitle')} - {t.get('title')} | keys={list(r)[:5]}"
 
     return asyncio.run(go())
 
 
 def run() -> str:
-    lines = [f"yt-dlp {yt_dlp.version.__version__}"]
-    lines.append(_try("soundcloud:10ta", _sc_many))
-    holder = {}
-    lines.append(_try("soundcloud:file", lambda: holder.setdefault("p", _sc_file())))
-    if holder.get("p"):
-        lines.append(_try("shazam", lambda: _shazam(holder["p"])))
-    lines.append(_try("instagram", lambda: _video("https://www.instagram.com/p/aye83DjauH/")))
-    lines.append(_try("instagram-reel", lambda: _video("https://www.instagram.com/reel/CWqAgUZgCku/")))
-    lines.append(_try("tiktok", lambda: _video("https://www.tiktok.com/@scout2015/video/6718335390845095173")))
-    lines.append(_try("lrclib", lambda: __import__("urllib.request").request.urlopen("https://lrclib.net/api/search?q=seni%20sevaman", timeout=15).status))
+    lines = []
+    for h in ["inv.nadeko.net", "yewtu.be", "invidious.nerdvpn.de", "inv.tux.pizza", "invidious.f5.si", "iv.melmac.space"]:
+        lines.append(_try(f"invidious:{h}", lambda h=h: _invidious(h)))
+    for h in ["pipedapi.kavin.rocks", "pipedapi.adminforge.de", "api.piped.private.coffee"]:
+        lines.append(_try(f"piped:{h}", lambda h=h: _piped(h)))
+    lines.append(_try("shazam(tiktok)", _shazam))
     return "\n".join(lines)
