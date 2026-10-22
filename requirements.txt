@@ -3,3 +3,4 @@ yt-dlp[default]>=2025.10.22
 python-dotenv==1.0.1
 aiosqlite==0.20.0
 asyncpg==0.30.0
+shazamio>=0.8.0; sys_platform == "linux"

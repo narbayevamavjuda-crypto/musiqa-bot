@@ -1,51 +1,75 @@
 """Vaqtinchalik: serverda qaysi manba ishlashini tekshirish (/diag)."""
+import asyncio
+import os
+import tempfile
 import time
-import traceback
 
 import yt_dlp
-
-VIDEO = "https://www.youtube.com/watch?v=IMdfvJ6Q2Cg"
-CLIENTS = ["default", "tv_embedded", "web_embedded", "mweb", "android_vr", "ios", "tv", "web_safari", "android"]
 
 
 def _try(name, fn):
     t = time.time()
     try:
-        res = fn()
-        return f"OK   {name} ({time.time() - t:.1f}s): {res}"
+        return f"OK   {name} ({time.time() - t:.1f}s): {fn()}"
     except Exception as e:  # noqa: BLE001
-        msg = str(e).replace("\n", " ")[:160]
-        return f"FAIL {name} ({time.time() - t:.1f}s): {msg}"
+        return f"FAIL {name} ({time.time() - t:.1f}s): {str(e).replace(chr(10), ' ')[:200]}"
 
 
-def _yt(client):
-    opts = {"quiet": True, "no_warnings": True, "skip_download": True, "format": "bestaudio/best"}
-    if client != "default":
-        opts["extractor_args"] = {"youtube": {"player_client": [client]}}
-    with yt_dlp.YoutubeDL(opts) as y:
-        info = y.extract_info(VIDEO, download=False)
-    return f"{info.get('format_id')} {info.get('abr')}kbps"
-
-
-def _sc_search():
+def _sc_many():
+    out = []
     with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True}) as y:
-        r = y.extract_info("scsearch5:Shahzoda Ayt", download=False)
-    return " | ".join(f"{e.get('title')} [{int(e.get('duration') or 0)}s]" for e in r["entries"])
+        r = y.extract_info("scsearch10:Shahzoda Ayt", download=False)
+    for e in r["entries"]:
+        try:
+            with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True, "format": "bestaudio/best"}) as y:
+                i = y.extract_info(e["url"], download=False)
+            out.append(f"ok:{i.get('format_id')}:{i.get('duration')}")
+        except Exception as ex:  # noqa: BLE001
+            out.append("drm" if "DRM" in str(ex) else "err")
+    return " ".join(out)
 
 
-def _sc_dl():
+def _sc_file():
+    d = tempfile.mkdtemp()
     with yt_dlp.YoutubeDL({"quiet": True, "extract_flat": True}) as y:
-        r = y.extract_info("scsearch1:Shahzoda", download=False)
-    url = r["entries"][0]["url"]
-    with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True, "format": "bestaudio/best"}) as y:
-        info = y.extract_info(url, download=False)
-    return f"{info.get('title')} {info.get('format_id')} {info.get('duration')}s"
+        r = y.extract_info("scsearch10:Konsta", download=False)
+    for e in r["entries"]:
+        try:
+            with yt_dlp.YoutubeDL({"quiet": True, "format": "bestaudio/best", "outtmpl": f"{d}/%(id)s.%(ext)s"}) as y:
+                i = y.extract_info(e["url"], download=True)
+            p = i["requested_downloads"][0]["filepath"]
+            return p
+        except Exception:  # noqa: BLE001
+            continue
+    raise RuntimeError("hech biri yuklanmadi")
+
+
+def _video(url):
+    with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True}) as y:
+        i = y.extract_info(url, download=False)
+    return f"{i.get('title', '')[:50]} {i.get('duration')}s"
+
+
+def _shazam(path):
+    from shazamio import Shazam
+
+    async def go():
+        r = await Shazam().recognize(path)
+        t = r.get("track") or {}
+        return f"{t.get('subtitle')} - {t.get('title')}"
+
+    return asyncio.run(go())
 
 
 def run() -> str:
     lines = [f"yt-dlp {yt_dlp.version.__version__}"]
-    for c in CLIENTS:
-        lines.append(_try(f"youtube:{c}", lambda c=c: _yt(c)))
-    lines.append(_try("soundcloud:search", _sc_search))
-    lines.append(_try("soundcloud:stream", _sc_dl))
+    lines.append(_try("soundcloud:10ta", _sc_many))
+    holder = {}
+    lines.append(_try("soundcloud:file", lambda: holder.setdefault("p", _sc_file())))
+    if holder.get("p"):
+        lines.append(_try("shazam", lambda: _shazam(holder["p"])))
+    lines.append(_try("instagram", lambda: _video("https://www.instagram.com/p/aye83DjauH/")))
+    lines.append(_try("instagram-reel", lambda: _video("https://www.instagram.com/reel/CWqAgUZgCku/")))
+    lines.append(_try("tiktok", lambda: _video("https://www.tiktok.com/@scout2015/video/6718335390845095173")))
+    lines.append(_try("lrclib", lambda: __import__("urllib.request").request.urlopen("https://lrclib.net/api/search?q=seni%20sevaman", timeout=15).status))
     return "\n".join(lines)
