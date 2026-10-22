@@ -123,12 +123,17 @@ async def join_request(req: ChatJoinRequest):
 
 
 # ---------------- qidiruv va yuklash ----------------
+COVER_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cover.jpg")
+COVER_VERSION = "c1"  # muqova o'zgarsa oshiring — eski keshdagi audiolar yangi muqova bilan qayta yuklanadi
+
+
 def audio_caption(username: str) -> str:
     return f"@{username} Eng sara musiqalar shu yerda.\nQidiring, toping, tinglang va MP3 yuklab oling."
 
 
 async def deliver(message: Message, bot: Bot, key: str, url: str):
     me = await bot.me()
+    key = f"{COVER_VERSION}:{key}"
     cached = await db.get_cached(key)
     if cached:
         await message.answer_audio(cached, caption=audio_caption(me.username))
@@ -153,6 +158,7 @@ async def deliver(message: Message, bot: Bot, key: str, url: str):
             performer=info["performer"][:64],
             duration=info["duration"],
             caption=audio_caption(me.username),
+            thumbnail=FSInputFile(COVER_PATH) if os.path.exists(COVER_PATH) else None,
         )
         await db.set_cached(key, sent.audio.file_id)
         await status.delete()
